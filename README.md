@@ -4,11 +4,14 @@ A lightweight FastAPI service that accepts Jenkins build logs, sends them to any
 
 ## Features
 
-- `POST /analyze` — synchronous analysis: submit a log, get back root cause + suggested fix + confidence
+- `POST /analyze` — synchronous analysis: submit a log, get back root cause + suggested fix + confidence + failure category
 - `POST /analyze/stream` — same analysis over Server-Sent Events (SSE) as tokens stream in
 - `GET /jobs/{job_name}/history` — query past analyses for a job, newest first
 - `GET /health` — liveness check
 - Works with any OpenAI-compatible gateway (haimaker.ai, LiteLLM, OpenAI, etc.)
+- Classifies failures into one of six categories: `build`, `test`, `dependency`, `infrastructure`, `pipeline`, `other`
+- Optional `tail_lines` parameter to send only the last N lines of a large log to the LLM
+- Automatic DB cleanup: records older than `RETENTION_DAYS` days are deleted daily in the background
 - Handles model quirks: strips `<think>` reasoning blocks, normalises float confidence scores
 
 ## Quick Start
@@ -49,12 +52,13 @@ The service listens on port `8000`.
 
 All settings are environment variables — no config files, no restarts needed beyond container recreation.
 
-| Variable | Required | Description |
-|---|---|---|
-| `OPENAI_BASE_URL` | Yes | Base URL of your OpenAI-compatible gateway |
-| `OPENAI_API_KEY` | Yes | API key for the gateway |
-| `MODEL_NAME` | Yes | Model identifier (e.g. `minimax/MiniMax-M2.7`, `gpt-4o`, `claude-3-haiku`) |
-| `DB_PATH` | No | SQLite file path (default: `/data/analyzer.db`) |
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `OPENAI_BASE_URL` | Yes | — | Base URL of your OpenAI-compatible gateway |
+| `OPENAI_API_KEY` | Yes | — | API key for the gateway |
+| `MODEL_NAME` | Yes | — | Model identifier (e.g. `minimax/MiniMax-M2.7`, `gpt-4o`) |
+| `DB_PATH` | No | `/data/analyzer.db` | SQLite file path |
+| `RETENTION_DAYS` | No | `90` | Days to retain analysis records before automatic deletion |
 
 ### Switching Gateways
 
@@ -79,9 +83,12 @@ Submit a Jenkins build log for analysis.
 {
   "log": "<full Jenkins console output>",
   "job_name": "my-pipeline",
-  "build_number": 42
+  "build_number": 42,
+  "tail_lines": 200
 }
 ```
+
+> `tail_lines` is optional. When set to a positive integer, only the last N lines of `log` are sent to the LLM. Omit it (or pass `null`) to send the full log.
 
 **Response:**
 ```json
@@ -92,13 +99,20 @@ Submit a Jenkins build log for analysis.
   "root_cause": "Gradle failed to resolve com.google.guava:guava:33.0.0-jre — no matching variant found",
   "suggested_fix": "Pin guava to 32.1.3-jre in build.gradle and run ./gradlew --refresh-dependencies",
   "confidence": "high",
+  "failure_category": "dependency",
   "created_at": "2026-05-30T12:34:56.123456+00:00"
 }
 ```
 
+> `failure_category` is one of: `build`, `test`, `dependency`, `infrastructure`, `pipeline`, `other`.
+
 ### POST /analyze/stream
 
-Same request body. Returns an SSE stream of `{"delta": "..."}` events while the model responds, followed by a final `{"done": true, "root_cause": "...", ...}` event.
+Same request body as `/analyze` (including optional `tail_lines`). Returns an SSE stream of `{"delta": "..."}` events while the model responds, followed by a final event that includes all result fields:
+
+```json
+{"done": true, "root_cause": "...", "suggested_fix": "...", "confidence": "high", "failure_category": "dependency"}
+```
 
 ### GET /jobs/{job_name}/history
 
