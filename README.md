@@ -122,6 +122,50 @@ Returns all past analyses for a job, newest first.
 curl http://localhost:8000/jobs/my-pipeline/history
 ```
 
+### POST /query
+
+Ask a plain English question about your build history. The service generates a read-only SQL query, runs it, and returns the results alongside the SQL used.
+
+**Request:**
+```json
+{
+  "question": "which jobs failed the most in the last 7 days?"
+}
+```
+
+**Response:**
+```json
+{
+  "question": "which jobs failed the most in the last 7 days?",
+  "sql": "SELECT job_name, COUNT(*) as total FROM analyses WHERE created_at >= datetime('now', '-7 days') GROUP BY job_name ORDER BY total DESC LIMIT 10",
+  "results": [
+    {"job_name": "payments-service", "total": 5},
+    {"job_name": "auth-service", "total": 2}
+  ]
+}
+```
+
+The `sql` field is always returned so you can inspect (or reuse) the generated query. Only `SELECT` statements are permitted — anything else returns `422`.
+
+Example questions:
+
+```bash
+# Most common failure categories
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "what were the most common failure categories?"}'
+
+# Jobs with the most failures this week
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "which jobs failed the most recently?"}'
+
+# Recent low-confidence analyses (worth double-checking)
+curl -X POST http://localhost:8000/query \
+  -H "Content-Type: application/json" \
+  -d '{"question": "show me all low confidence analyses from the last 30 days"}'
+```
+
 ### GET /health
 
 ```bash
