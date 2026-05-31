@@ -115,7 +115,7 @@ async def init_db() -> None:
 
 async def _run_cleanup() -> None:
     try:
-        retention_days = int(os.environ.get("RETENTION_DAYS", "90"))
+        retention_days = int(os.environ.get("RETENTION_DAYS", "365"))
     except ValueError:
         logging.warning("Invalid RETENTION_DAYS value, defaulting to 90")
         retention_days = 90

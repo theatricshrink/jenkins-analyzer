@@ -59,7 +59,7 @@ All settings are environment variables — no config files, no restarts needed b
 | `OPENAI_API_KEY` | Yes | — | API key for the gateway |
 | `MODEL_NAME` | Yes | — | Model identifier (e.g. `minimax/MiniMax-M2.7`, `gpt-4o`) |
 | `DB_PATH` | No | `/data/analyzer.db` | SQLite file path |
-| `RETENTION_DAYS` | No | `90` | Days to retain analysis records before automatic deletion |
+| `RETENTION_DAYS` | No | `365` | Days to retain analysis records before automatic deletion |
 
 ### Switching Gateways
 
