@@ -7,6 +7,7 @@ A lightweight FastAPI service that accepts Jenkins build logs, sends them to any
 - `POST /analyze` — synchronous analysis: submit a log, get back root cause + suggested fix + confidence + failure category
 - `POST /analyze/stream` — same analysis over Server-Sent Events (SSE) as tokens stream in
 - `GET /jobs/{job_name}/history` — query past analyses for a job, newest first
+- `POST /query` — ask a plain English question about your build history; the service generates and runs a read-only SQL query and returns the results
 - `GET /health` — liveness check
 - Works with any OpenAI-compatible gateway (haimaker.ai, LiteLLM, OpenAI, etc.)
 - Classifies failures into one of six categories: `build`, `test`, `dependency`, `infrastructure`, `pipeline`, `other`
