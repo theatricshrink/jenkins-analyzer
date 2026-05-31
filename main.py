@@ -1,8 +1,10 @@
+import asyncio
+import contextlib
 import json
 import os
 import re
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 from fastapi import FastAPI, HTTPException, Request
@@ -87,6 +89,23 @@ async def init_db() -> None:
         await db.commit()
 
 
+async def _run_cleanup() -> None:
+    retention_days = int(os.environ.get("RETENTION_DAYS", "90"))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM analyses WHERE created_at < ?", (cutoff,))
+        await db.commit()
+
+
+async def _cleanup_loop() -> None:
+    while True:
+        await asyncio.sleep(86400)  # wait 24 h before first and every subsequent run
+        try:
+            await _run_cleanup()
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -94,7 +113,11 @@ async def lifespan(app: FastAPI):
         base_url=os.environ["OPENAI_BASE_URL"],
         api_key=os.environ["OPENAI_API_KEY"],
     )
+    app.state.cleanup_task = asyncio.create_task(_cleanup_loop())
     yield
+    app.state.cleanup_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await app.state.cleanup_task
     await app.state.llm.close()
 
 

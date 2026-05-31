@@ -203,3 +203,30 @@ async def test_tail_lines_trims_log(ac):
     # Last 5 lines: "15\n16\n17\n18\n19"
     assert "15\n16\n17\n18\n19" in user_msg
     assert "0\n1" not in user_msg
+
+
+async def test_cleanup_deletes_old_records():
+    import aiosqlite as _aiosqlite
+    from main import _run_cleanup
+
+    db_path = os.environ["DB_PATH"]
+    async with _aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """INSERT INTO analyses
+               (job_name, build_number, log_text, root_cause, suggested_fix,
+                confidence, failure_category, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("old-job", 99, "log", "cause", "fix", "high", "build",
+             "2020-01-01T00:00:00+00:00"),
+        )
+        await db.commit()
+
+    await _run_cleanup()
+
+    async with _aiosqlite.connect(db_path) as db:
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM analyses WHERE job_name = ?", ("old-job",)
+        )
+        (count,) = await cursor.fetchone()
+
+    assert count == 0
