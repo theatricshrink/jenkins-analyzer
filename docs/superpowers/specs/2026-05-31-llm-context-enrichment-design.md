@@ -97,6 +97,16 @@ POST /analyze
 - New test: unrecognised `failure_category` from model defaults to `"other"`.
 - New test: existing DB without `failure_category` column is migrated cleanly on startup.
 
+## README Updates
+
+Update `README.md` to reflect all changes:
+
+- **Configuration table:** add `RETENTION_DAYS` env var.
+- **API — POST /analyze:** update request and response examples to include `tail_lines` (optional) and `failure_category`.
+- **API — POST /analyze/stream:** note `failure_category` appears in the final `done` event.
+- **Features list:** add entries for log trimming, failure categorization, and automatic DB cleanup.
+- **Development section:** document the new env var.
+
 ## Out of Scope
 
 - No new API endpoints.
