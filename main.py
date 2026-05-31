@@ -47,7 +47,9 @@ def _parse_llm_json(content: str) -> dict:
     if json_match:
         content = json_match.group(0)
     parsed = json.loads(content)  # raises json.JSONDecodeError on bad JSON
-    _ = parsed["root_cause"], parsed["suggested_fix"], parsed["confidence"]  # raises KeyError if missing
+    for key in ("root_cause", "suggested_fix", "confidence"):
+        if key not in parsed:
+            raise KeyError(key)
     conf = str(parsed["confidence"]).lower()
     try:
         conf_float = float(conf)
@@ -79,8 +81,9 @@ async def init_db() -> None:
             await db.execute(
                 "ALTER TABLE analyses ADD COLUMN failure_category TEXT NOT NULL DEFAULT 'other'"
             )
-        except aiosqlite.OperationalError:
-            pass  # column already exists in pre-existing databases
+        except aiosqlite.OperationalError as e:
+            if "duplicate column name" not in str(e):
+                raise
         await db.commit()
 
 
