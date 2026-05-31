@@ -2,6 +2,7 @@ import atexit
 import json
 import os
 import tempfile
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -211,6 +212,7 @@ async def test_cleanup_deletes_old_records():
 
     db_path = os.environ["DB_PATH"]
     async with _aiosqlite.connect(db_path) as db:
+        # Old record — should be deleted
         await db.execute(
             """INSERT INTO analyses
                (job_name, build_number, log_text, root_cause, suggested_fix,
@@ -218,6 +220,15 @@ async def test_cleanup_deletes_old_records():
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             ("old-job", 99, "log", "cause", "fix", "high", "build",
              "2020-01-01T00:00:00+00:00"),
+        )
+        # Recent record — should survive
+        await db.execute(
+            """INSERT INTO analyses
+               (job_name, build_number, log_text, root_cause, suggested_fix,
+                confidence, failure_category, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("recent-job", 1, "log", "cause", "fix", "low", "test",
+             datetime.now(timezone.utc).isoformat()),
         )
         await db.commit()
 
@@ -227,6 +238,12 @@ async def test_cleanup_deletes_old_records():
         cursor = await db.execute(
             "SELECT COUNT(*) FROM analyses WHERE job_name = ?", ("old-job",)
         )
-        (count,) = await cursor.fetchone()
+        (old_count,) = await cursor.fetchone()
 
-    assert count == 0
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM analyses WHERE job_name = ?", ("recent-job",)
+        )
+        (recent_count,) = await cursor.fetchone()
+
+    assert old_count == 0
+    assert recent_count == 1

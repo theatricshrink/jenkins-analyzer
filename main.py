@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import re
 from contextlib import asynccontextmanager
@@ -90,7 +91,11 @@ async def init_db() -> None:
 
 
 async def _run_cleanup() -> None:
-    retention_days = int(os.environ.get("RETENTION_DAYS", "90"))
+    try:
+        retention_days = int(os.environ.get("RETENTION_DAYS", "90"))
+    except ValueError:
+        logging.warning("Invalid RETENTION_DAYS value, defaulting to 90")
+        retention_days = 90
     cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM analyses WHERE created_at < ?", (cutoff,))
@@ -103,7 +108,7 @@ async def _cleanup_loop() -> None:
         try:
             await _run_cleanup()
         except Exception:
-            pass
+            logging.exception("Cleanup run failed")
 
 
 @asynccontextmanager
