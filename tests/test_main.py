@@ -168,7 +168,7 @@ async def test_user_message_includes_job_metadata(ac):
         })
 
     assert r.status_code == 200
-    user_msg = captured[1]["content"]
+    user_msg = next(m["content"] for m in captured if m["role"] == "user")
     assert "Job: payments-service | Build: #42" in user_msg
     assert "some log output" in user_msg
 
@@ -199,7 +199,7 @@ async def test_tail_lines_trims_log(ac):
         })
 
     assert r.status_code == 200
-    user_msg = captured[1]["content"]
+    user_msg = next(m["content"] for m in captured if m["role"] == "user")
     # Last 5 lines: "15\n16\n17\n18\n19"
     assert "15\n16\n17\n18\n19" in user_msg
     assert "0\n1" not in user_msg

@@ -8,7 +8,7 @@ import aiosqlite
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 DB_PATH = os.getenv("DB_PATH", "/data/analyzer.db")
 
@@ -105,7 +105,7 @@ class AnalyzeRequest(BaseModel):
     log: str
     job_name: str
     build_number: int
-    tail_lines: int | None = None
+    tail_lines: int | None = Field(default=None, gt=0)
 
 
 class AnalysisResult(BaseModel):
@@ -119,6 +119,11 @@ class AnalysisResult(BaseModel):
     created_at: str
 
 
+def _build_user_message(log: str, job_name: str, build_number: int, tail_lines: int | None) -> str:
+    log_text = "\n".join(log.splitlines()[-tail_lines:]) if tail_lines is not None else log
+    return f"Job: {job_name} | Build: #{build_number}\n\n{log_text}"
+
+
 async def call_llm(
     client: AsyncOpenAI,
     log: str,
@@ -127,8 +132,7 @@ async def call_llm(
     tail_lines: int | None = None,
 ) -> dict:
     model = os.environ.get("MODEL_NAME", "minimax/MiniMax-M2.7")
-    log_text = "\n".join(log.splitlines()[-tail_lines:]) if tail_lines is not None else log
-    user_message = f"Job: {job_name} | Build: #{build_number}\n\n{log_text}"
+    user_message = _build_user_message(log, job_name, build_number, tail_lines)
     response = await client.chat.completions.create(
         model=model,
         messages=[
@@ -190,8 +194,7 @@ async def analyze(req: AnalyzeRequest, request: Request) -> AnalysisResult:
 async def analyze_stream(req: AnalyzeRequest, request: Request):
     client = request.app.state.llm
     model = os.environ.get("MODEL_NAME", "minimax/MiniMax-M2.7")
-    log_text = "\n".join(req.log.splitlines()[-req.tail_lines:]) if req.tail_lines is not None else req.log
-    user_message = f"Job: {req.job_name} | Build: #{req.build_number}\n\n{log_text}"
+    user_message = _build_user_message(req.log, req.job_name, req.build_number, req.tail_lines)
 
     async def event_generator():
         collected = ""
