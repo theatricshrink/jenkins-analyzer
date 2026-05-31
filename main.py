@@ -105,6 +105,7 @@ class AnalyzeRequest(BaseModel):
     log: str
     job_name: str
     build_number: int
+    tail_lines: int | None = None
 
 
 class AnalysisResult(BaseModel):
@@ -118,13 +119,21 @@ class AnalysisResult(BaseModel):
     created_at: str
 
 
-async def call_llm(client: AsyncOpenAI, log: str) -> dict:
+async def call_llm(
+    client: AsyncOpenAI,
+    log: str,
+    job_name: str,
+    build_number: int,
+    tail_lines: int | None = None,
+) -> dict:
     model = os.environ.get("MODEL_NAME", "minimax/MiniMax-M2.7")
+    log_text = "\n".join(log.splitlines()[-tail_lines:]) if tail_lines is not None else log
+    user_message = f"Job: {job_name} | Build: #{build_number}\n\n{log_text}"
     response = await client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": log},
+            {"role": "user", "content": user_message},
         ],
     )
     content = response.choices[0].message.content
@@ -161,7 +170,9 @@ async def health():
 
 @app.post("/analyze", response_model=AnalysisResult)
 async def analyze(req: AnalyzeRequest, request: Request) -> AnalysisResult:
-    result = await call_llm(request.app.state.llm, req.log)
+    result = await call_llm(
+        request.app.state.llm, req.log, req.job_name, req.build_number, req.tail_lines
+    )
     row_id, now = await persist(req, result)
     return AnalysisResult(
         id=row_id,
@@ -179,6 +190,8 @@ async def analyze(req: AnalyzeRequest, request: Request) -> AnalysisResult:
 async def analyze_stream(req: AnalyzeRequest, request: Request):
     client = request.app.state.llm
     model = os.environ.get("MODEL_NAME", "minimax/MiniMax-M2.7")
+    log_text = "\n".join(req.log.splitlines()[-req.tail_lines:]) if req.tail_lines is not None else req.log
+    user_message = f"Job: {req.job_name} | Build: #{req.build_number}\n\n{log_text}"
 
     async def event_generator():
         collected = ""
@@ -186,7 +199,7 @@ async def analyze_stream(req: AnalyzeRequest, request: Request):
             model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": req.log},
+                {"role": "user", "content": user_message},
             ],
             stream=True,
         )

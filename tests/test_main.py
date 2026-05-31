@@ -143,3 +143,63 @@ async def test_init_db_migrates_existing_database():
     finally:
         import os as _os
         _os.unlink(tmp.name)
+
+
+async def test_user_message_includes_job_metadata(ac):
+    payload = {
+        "root_cause": "r", "suggested_fix": "f",
+        "confidence": "high", "failure_category": "build",
+    }
+    captured = []
+
+    async def mock_create(*args, **kwargs):
+        captured.extend(kwargs.get("messages", []))
+        return _fake_completion(payload)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = mock_create
+    mock_client.close = AsyncMock()
+
+    with patch.object(app.state, "llm", mock_client, create=True):
+        r = await ac.post("/analyze", json={
+            "log": "some log output",
+            "job_name": "payments-service",
+            "build_number": 42,
+        })
+
+    assert r.status_code == 200
+    user_msg = captured[1]["content"]
+    assert "Job: payments-service | Build: #42" in user_msg
+    assert "some log output" in user_msg
+
+
+async def test_tail_lines_trims_log(ac):
+    payload = {
+        "root_cause": "r", "suggested_fix": "f",
+        "confidence": "high", "failure_category": "test",
+    }
+    captured = []
+
+    async def mock_create(*args, **kwargs):
+        captured.extend(kwargs.get("messages", []))
+        return _fake_completion(payload)
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = mock_create
+    mock_client.close = AsyncMock()
+
+    log = "\n".join(str(i) for i in range(20))  # lines "0" through "19"
+
+    with patch.object(app.state, "llm", mock_client, create=True):
+        r = await ac.post("/analyze", json={
+            "log": log,
+            "job_name": "trim-job",
+            "build_number": 5,
+            "tail_lines": 5,
+        })
+
+    assert r.status_code == 200
+    user_msg = captured[1]["content"]
+    # Last 5 lines: "15\n16\n17\n18\n19"
+    assert "15\n16\n17\n18\n19" in user_msg
+    assert "0\n1" not in user_msg
