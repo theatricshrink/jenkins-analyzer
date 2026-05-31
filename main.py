@@ -12,28 +12,75 @@ from pydantic import BaseModel
 
 DB_PATH = os.getenv("DB_PATH", "/data/analyzer.db")
 
-SYSTEM_PROMPT = (
-    "You are a CI/CD expert. Analyze the Jenkins build log and return ONLY valid JSON "
-    "with keys: root_cause (string), suggested_fix (string), confidence "
-    "(one of: high, medium, low). Do not include any text outside the JSON object."
-)
+SYSTEM_PROMPT = """\
+You are a CI/CD expert analyzing Jenkins build logs.
 
+Jenkins log structure:
+- Stage headers look like: [Pipeline] stage("Build")
+- Each step's output follows its [Pipeline] marker
+- Errors typically appear in the final stages before the BUILD FAILED banner
+- The log closes with EXIT CODE: <N> and BUILD FAILED or BUILD SUCCESS
+
+Failure categories — pick exactly one:
+  build          : compilation or packaging failure (Gradle, Maven, npm, make, etc.)
+  test           : unit or integration test failures
+  dependency     : unresolvable dependency or version conflict
+  infrastructure : OOM kill, disk full, network timeout, agent unavailable
+  pipeline       : Groovy/Jenkinsfile syntax error or Jenkins plugin failure
+  other          : none of the above
+
+Return ONLY valid JSON with these exact keys:
+  root_cause       (string)  — specific cause of the failure
+  suggested_fix    (string)  — concrete remediation step
+  confidence       (one of: high, medium, low)
+  failure_category (one of: build, test, dependency, infrastructure, pipeline, other)
+
+Do not include any text outside the JSON object.\
+"""
+
+_VALID_CATEGORIES = frozenset({"build", "test", "dependency", "infrastructure", "pipeline", "other"})
+
+
+def _parse_llm_json(content: str) -> dict:
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+    json_match = re.search(r"\{.*\}", content, re.DOTALL)
+    if json_match:
+        content = json_match.group(0)
+    parsed = json.loads(content)  # raises json.JSONDecodeError on bad JSON
+    _ = parsed["root_cause"], parsed["suggested_fix"], parsed["confidence"]  # raises KeyError if missing
+    conf = str(parsed["confidence"]).lower()
+    try:
+        conf_float = float(conf)
+        parsed["confidence"] = "high" if conf_float >= 0.7 else "medium" if conf_float >= 0.4 else "low"
+    except ValueError:
+        if conf not in ("high", "medium", "low"):
+            parsed["confidence"] = "medium"
+    cat = str(parsed.get("failure_category", "")).lower()
+    parsed["failure_category"] = cat if cat in _VALID_CATEGORIES else "other"
+    return parsed
 
 
 async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS analyses (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_name      TEXT    NOT NULL,
-                build_number  INTEGER NOT NULL,
-                log_text      TEXT    NOT NULL,
-                root_cause    TEXT    NOT NULL,
-                suggested_fix TEXT    NOT NULL,
-                confidence    TEXT    NOT NULL,
-                created_at    TEXT    NOT NULL
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_name         TEXT    NOT NULL,
+                build_number     INTEGER NOT NULL,
+                log_text         TEXT    NOT NULL,
+                root_cause       TEXT    NOT NULL,
+                suggested_fix    TEXT    NOT NULL,
+                confidence       TEXT    NOT NULL,
+                failure_category TEXT    NOT NULL DEFAULT 'other',
+                created_at       TEXT    NOT NULL
             )
         """)
+        try:
+            await db.execute(
+                "ALTER TABLE analyses ADD COLUMN failure_category TEXT NOT NULL DEFAULT 'other'"
+            )
+        except aiosqlite.OperationalError:
+            pass  # column already exists in pre-existing databases
         await db.commit()
 
 
@@ -64,6 +111,7 @@ class AnalysisResult(BaseModel):
     root_cause: str
     suggested_fix: str
     confidence: str
+    failure_category: str
     created_at: str
 
 
@@ -79,29 +127,8 @@ async def call_llm(client: AsyncOpenAI, log: str) -> dict:
     content = response.choices[0].message.content
     if content is None:
         raise HTTPException(status_code=422, detail="LLM returned no content")
-    # Strip <think>...</think> reasoning blocks emitted by some models
-    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-    # Extract the first JSON object from the response
-    json_match = re.search(r"\{.*\}", content, re.DOTALL)
-    if json_match:
-        content = json_match.group(0)
     try:
-        parsed = json.loads(content)
-        _ = parsed["root_cause"], parsed["suggested_fix"], parsed["confidence"]
-        # Normalize confidence to high/medium/low if the model returned a float string
-        conf = str(parsed["confidence"]).lower()
-        try:
-            conf_float = float(conf)
-            if conf_float >= 0.7:
-                parsed["confidence"] = "high"
-            elif conf_float >= 0.4:
-                parsed["confidence"] = "medium"
-            else:
-                parsed["confidence"] = "low"
-        except ValueError:
-            if conf not in ("high", "medium", "low"):
-                parsed["confidence"] = "medium"
-        return parsed
+        return _parse_llm_json(content)
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=422, detail=f"LLM returned invalid JSON: {e}")
     except KeyError as e:
@@ -114,10 +141,11 @@ async def persist(req: AnalyzeRequest, result: dict) -> tuple[int, str]:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             """INSERT INTO analyses
-               (job_name, build_number, log_text, root_cause, suggested_fix, confidence, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (job_name, build_number, log_text, root_cause, suggested_fix, confidence, failure_category, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (req.job_name, req.build_number, req.log,
-             result["root_cause"], result["suggested_fix"], result["confidence"], now),
+             result["root_cause"], result["suggested_fix"], result["confidence"],
+             result["failure_category"], now),
         )
         await db.commit()
         return cursor.lastrowid, now
@@ -139,6 +167,7 @@ async def analyze(req: AnalyzeRequest, request: Request) -> AnalysisResult:
         root_cause=result["root_cause"],
         suggested_fix=result["suggested_fix"],
         confidence=result["confidence"],
+        failure_category=result["failure_category"],
         created_at=now,
     )
 
@@ -165,7 +194,7 @@ async def analyze_stream(req: AnalyzeRequest, request: Request):
                 yield f"data: {json.dumps({'delta': delta})}\n\n"
 
         try:
-            result = json.loads(collected)
+            result = _parse_llm_json(collected)
             await persist(req, result)
             yield f"data: {json.dumps({'done': True, **result})}\n\n"
         except (json.JSONDecodeError, KeyError, TypeError):
@@ -192,6 +221,7 @@ async def job_history(job_name: str) -> list[AnalysisResult]:
             root_cause=row["root_cause"],
             suggested_fix=row["suggested_fix"],
             confidence=row["confidence"],
+            failure_category=row["failure_category"],
             created_at=row["created_at"],
         )
         for row in rows
