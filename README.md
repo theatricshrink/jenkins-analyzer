@@ -156,17 +156,56 @@ stage('Analyze Failure') {
 }
 ```
 
-Or with plain `curl` in a shell step:
+Or with a plain `sh` step that formats the output cleanly in the Jenkins console:
 
 ```bash
-ANALYSIS=$(jq -n --rawfile log build.log \
+RESULT=$(jq -n --rawfile log build.log \
   '{"log": $log, "job_name": "my-job", "build_number": 1}' \
   | curl -sf -X POST http://your-analyzer-host:8000/analyze \
-      -H "Content-Type: application/json" --data @-)
+      -H "Content-Type: application/json" --data @-) \
+  || { echo "ERROR: Analyzer request failed"; exit 1; }
 
-echo "Root cause   : $(echo "$ANALYSIS" | jq -r .root_cause)"
-echo "Suggested fix: $(echo "$ANALYSIS" | jq -r .suggested_fix)"
-echo "Confidence   : $(echo "$ANALYSIS" | jq -r .confidence)"
+set +x   # stop echoing commands so each line prints once
+echo ""
+echo "+------------------------------------------------------------------+"
+echo "|                  BUILD FAILURE ANALYSIS                         |"
+echo "+------------------------------------------------------------------+"
+printf "  Category   : %s\n" "$(echo "$RESULT" | jq -r .failure_category)"
+printf "  Confidence : %s\n" "$(echo "$RESULT" | jq -r .confidence)"
+echo ""
+echo "  Root cause:"
+echo "$RESULT" | jq -r .root_cause | fold -sw 70 | sed 's/^/    /'
+echo ""
+echo "  Suggested fix:"
+echo "$RESULT" | jq -r .suggested_fix | fold -sw 70 | sed 's/^/    /'
+echo ""
+echo "+------------------------------------------------------------------+"
+```
+
+Sample console output:
+
+```
+=== Sending log to analyzer ===
++ set +x
+
++------------------------------------------------------------------+
+|                  BUILD FAILURE ANALYSIS                         |
++------------------------------------------------------------------+
+  Category   : dependency
+  Confidence : high
+
+  Root cause:
+    Gradle failed to resolve com.google.guava:guava:33.0.0-jre —
+    'No matching variant' indicates a variant compatibility issue
+    (likely Java version mismatch or missing JVM variant for the
+    specified Guava version)
+
+  Suggested fix:
+    Verify the JDK version matches Guava 33.0.0-jre requirements
+    (JDK 8 minimum, JDK 11+ recommended). Or downgrade to a stable
+    version like 32.1.3-jre in build.gradle.
+
++------------------------------------------------------------------+
 ```
 
 ## Development
