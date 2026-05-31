@@ -27,6 +27,13 @@ def _fake_completion(payload: dict) -> MagicMock:
     return resp
 
 
+def _fake_completion_raw(content: str) -> MagicMock:
+    resp = MagicMock()
+    resp.choices = [MagicMock()]
+    resp.choices[0].message.content = content
+    return resp
+
+
 @pytest.fixture
 async def ac():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
@@ -204,6 +211,57 @@ async def test_tail_lines_trims_log(ac):
     # Last 5 lines: "15\n16\n17\n18\n19"
     assert "15\n16\n17\n18\n19" in user_msg
     assert "0\n1" not in user_msg
+
+
+async def test_query_returns_results(ac):
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(
+        return_value=_fake_completion_raw("SELECT job_name, COUNT(*) as total FROM analyses GROUP BY job_name ORDER BY total DESC")
+    )
+    mock_client.close = AsyncMock()
+    with patch.object(app.state, "llm", mock_client, create=True):
+        r = await ac.post("/query", json={"question": "which jobs failed the most?"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["question"] == "which jobs failed the most?"
+    assert "SELECT" in body["sql"]
+    assert isinstance(body["results"], list)
+
+
+async def test_query_rejects_non_select(ac):
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(
+        return_value=_fake_completion_raw("DELETE FROM analyses")
+    )
+    mock_client.close = AsyncMock()
+    with patch.object(app.state, "llm", mock_client, create=True):
+        r = await ac.post("/query", json={"question": "delete everything"})
+    assert r.status_code == 422
+    assert "SELECT" in r.json()["detail"]
+
+
+async def test_query_handles_sql_error(ac):
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(
+        return_value=_fake_completion_raw("SELECT * FROM nonexistent_table")
+    )
+    mock_client.close = AsyncMock()
+    with patch.object(app.state, "llm", mock_client, create=True):
+        r = await ac.post("/query", json={"question": "bad query"})
+    assert r.status_code == 422
+    assert "SQL error" in r.json()["detail"]
+
+
+async def test_query_strips_markdown_fences(ac):
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(
+        return_value=_fake_completion_raw("```sql\nSELECT COUNT(*) as total FROM analyses\n```")
+    )
+    mock_client.close = AsyncMock()
+    with patch.object(app.state, "llm", mock_client, create=True):
+        r = await ac.post("/query", json={"question": "how many records?"})
+    assert r.status_code == 200
+    assert r.json()["sql"] == "SELECT COUNT(*) as total FROM analyses"
 
 
 async def test_cleanup_deletes_old_records():

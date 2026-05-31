@@ -43,6 +43,29 @@ Do not include any text outside the JSON object.\
 
 _VALID_CATEGORIES = frozenset({"build", "test", "dependency", "infrastructure", "pipeline", "other"})
 
+QUERY_SYSTEM_PROMPT = """\
+You are a SQLite query generator for a Jenkins build failure analytics database.
+
+Table: analyses
+Columns:
+  id               INTEGER  — auto-increment primary key
+  job_name         TEXT     — Jenkins job name
+  build_number     INTEGER  — build number
+  root_cause       TEXT     — LLM-generated root cause description
+  suggested_fix    TEXT     — LLM-generated fix suggestion
+  confidence       TEXT     — one of: high, medium, low
+  failure_category TEXT     — one of: build, test, dependency, infrastructure, pipeline, other
+  created_at       TEXT     — ISO-8601 UTC timestamp (e.g. 2026-05-31T14:00:00+00:00)
+
+Rules:
+- Return ONLY the SQL query — no markdown fences, no explanation, no trailing semicolon
+- Only SELECT statements are permitted
+- Never reference the log_text column (it is large and excluded from analytics)
+- Use datetime('now', '-N days') for relative date filters
+- "recently" or "last week" means within the last 7 days
+- For rankings use GROUP BY ... ORDER BY ... DESC LIMIT 10 unless the user specifies otherwise\
+"""
+
 
 def _parse_llm_json(content: str) -> dict:
     content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
@@ -134,6 +157,16 @@ class AnalyzeRequest(BaseModel):
     job_name: str
     build_number: int
     tail_lines: int | None = Field(default=None, gt=0)
+
+
+class QueryRequest(BaseModel):
+    question: str
+
+
+class QueryResponse(BaseModel):
+    question: str
+    sql: str
+    results: list[dict]
 
 
 class AnalysisResult(BaseModel):
@@ -273,3 +306,32 @@ async def job_history(job_name: str) -> list[AnalysisResult]:
         )
         for row in rows
     ]
+
+
+@app.post("/query", response_model=QueryResponse)
+async def query_analytics(req: QueryRequest, request: Request) -> QueryResponse:
+    model = os.environ.get("MODEL_NAME", "minimax/MiniMax-M2.7")
+    response = await request.app.state.llm.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": QUERY_SYSTEM_PROMPT},
+            {"role": "user", "content": req.question},
+        ],
+    )
+    content = response.choices[0].message.content or ""
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+    # Strip markdown code fences if the model wrapped the SQL anyway
+    md_match = re.search(r"```(?:sql)?\s*(.*?)```", content, re.DOTALL | re.IGNORECASE)
+    sql = md_match.group(1).strip() if md_match else content.strip()
+    sql = sql.rstrip(";").strip()
+    if not re.match(r"^\s*SELECT\b", sql, re.IGNORECASE):
+        raise HTTPException(status_code=422, detail="LLM did not generate a SELECT query")
+    await init_db()
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            cursor = await db.execute(sql)
+        except aiosqlite.OperationalError as e:
+            raise HTTPException(status_code=422, detail=f"SQL error: {e}")
+        rows = await cursor.fetchall()
+    return QueryResponse(question=req.question, sql=sql, results=[dict(row) for row in rows])
