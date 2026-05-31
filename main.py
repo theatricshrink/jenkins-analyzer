@@ -117,8 +117,8 @@ async def _run_cleanup() -> None:
     try:
         retention_days = int(os.environ.get("RETENTION_DAYS", "365"))
     except ValueError:
-        logging.warning("Invalid RETENTION_DAYS value, defaulting to 90")
-        retention_days = 90
+        logging.warning("Invalid RETENTION_DAYS value, defaulting to 365")
+        retention_days = 365
     cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM analyses WHERE created_at < ?", (cutoff,))
