@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 import aiosqlite
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from openai import AsyncOpenAI
@@ -137,9 +138,13 @@ async def _cleanup_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    ssl_verify: bool | str = os.environ.get("SSL_CERT_FILE", True)
+    if os.environ.get("VERIFY_SSL", "true").lower() == "false":
+        ssl_verify = False
     app.state.llm = AsyncOpenAI(
         base_url=os.environ["OPENAI_BASE_URL"],
         api_key=os.environ["OPENAI_API_KEY"],
+        http_client=httpx.AsyncClient(verify=ssl_verify),
     )
     app.state.cleanup_task = asyncio.create_task(_cleanup_loop())
     yield
