@@ -60,6 +60,8 @@ All settings are environment variables — no config files, no restarts needed b
 | `MODEL_NAME` | Yes | — | Model identifier (e.g. `minimax/MiniMax-M2.7`, `gpt-4o`) |
 | `DB_PATH` | No | `/data/analyzer.db` | SQLite file path |
 | `RETENTION_DAYS` | No | `365` | Days to retain analysis records before automatic deletion |
+| `SSL_CERT_FILE` | No | — | Path to a CA bundle file (PEM). Use when your gateway uses an internally-signed certificate |
+| `VERIFY_SSL` | No | `true` | Set to `false` to disable TLS certificate verification entirely |
 
 ### Switching Gateways
 
@@ -72,6 +74,50 @@ MODEL_NAME=your-preferred-model
 ```
 
 No code changes needed.
+
+### Internal / Enterprise Gateways with Self-Signed Certificates
+
+If your LiteLLM gateway uses a certificate signed by an internal CA, the container's default trust store won't include it and connections will fail with `CERTIFICATE_VERIFY_FAILED`.
+
+**Option A — trust your CA bundle (recommended):**
+
+Mount the PEM file into the container and point `SSL_CERT_FILE` at it:
+
+```bash
+docker run -d \
+  -p 8000:8000 \
+  -v $(pwd)/data:/data \
+  -v /path/to/elf-ca-bundle.pem:/certs/ca-bundle.pem:ro \
+  -e OPENAI_BASE_URL=https://your-litellm-host/v1 \
+  -e OPENAI_API_KEY=your-key \
+  -e MODEL_NAME=your-model \
+  -e SSL_CERT_FILE=/certs/ca-bundle.pem \
+  ghcr.io/theatricshrink/jenkins-analyzer:latest
+```
+
+Or in `docker-compose.yml`:
+
+```yaml
+services:
+  analyzer:
+    image: ghcr.io/theatricshrink/jenkins-analyzer:latest
+    volumes:
+      - ./data:/data
+      - /path/to/elf-ca-bundle.pem:/certs/ca-bundle.pem:ro
+    environment:
+      OPENAI_BASE_URL: https://your-litellm-host/v1
+      OPENAI_API_KEY: your-key
+      MODEL_NAME: your-model
+      SSL_CERT_FILE: /certs/ca-bundle.pem
+```
+
+**Option B — disable verification (dev/internal-only environments):**
+
+```env
+VERIFY_SSL=false
+```
+
+> Disabling verification removes protection against man-in-the-middle attacks. Only use this on isolated internal networks where that risk is acceptable.
 
 ## API
 
