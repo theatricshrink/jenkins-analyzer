@@ -1,0 +1,42 @@
+{
+  "/root/jenkins-analyzer-repo/.claude/settings.local.json": {
+    "mtime": 1780840855.2107782,
+    "ast_hash": "e4327205fc447a0e61657d3296df835a",
+    "semantic_hash": "e4327205fc447a0e61657d3296df835a"
+  },
+  "/root/jenkins-analyzer-repo/main.py": {
+    "mtime": 1780237347.3434722,
+    "ast_hash": "4f4b370778a2b204bad7df10287a4523",
+    "semantic_hash": "4f4b370778a2b204bad7df10287a4523"
+  },
+  "/root/jenkins-analyzer-repo/tests/test_main.py": {
+    "mtime": 1780236770.556383,
+    "ast_hash": "3aafacdb1ec382fcf68f05e4e54f3807",
+    "semantic_hash": "3aafacdb1ec382fcf68f05e4e54f3807"
+  },
+  "/root/jenkins-analyzer-repo/README.md": {
+    "mtime": 1780237243.7497265,
+    "ast_hash": "08171f9948349a09acb0488ff7741615",
+    "semantic_hash": "08171f9948349a09acb0488ff7741615"
+  },
+  "/root/jenkins-analyzer-repo/docs/superpowers/plans/2026-05-31-llm-context-enrichment.md": {
+    "mtime": 1780233813.0504146,
+    "ast_hash": "de66fd0442292162dc9c3e7dcbaa93d4",
+    "semantic_hash": "de66fd0442292162dc9c3e7dcbaa93d4"
+  },
+  "/root/jenkins-analyzer-repo/docs/superpowers/specs/2026-05-31-llm-context-enrichment-design.md": {
+    "mtime": 1780233500.095882,
+    "ast_hash": "9f74041b76dcc292cfb9f0cb6f7af037",
+    "semantic_hash": "9f74041b76dcc292cfb9f0cb6f7af037"
+  },
+  "/root/jenkins-analyzer-repo/requirements-test.txt": {
+    "mtime": 1780145928.6979332,
+    "ast_hash": "5c2235ad9ecba66319ab0b83759dd9e0",
+    "semantic_hash": "5c2235ad9ecba66319ab0b83759dd9e0"
+  },
+  "/root/jenkins-analyzer-repo/requirements.txt": {
+    "mtime": 1780145928.6979332,
+    "ast_hash": "96c412b051624d2a4e44f218526b0b05",
+    "semantic_hash": "96c412b051624d2a4e44f218526b0b05"
+  }
+}
